@@ -1,4 +1,4 @@
-import config
+from . import config
 import shutil
 import os
 from pathlib import Path
