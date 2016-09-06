@@ -1,0 +1,6 @@
+.cache
+.tox
+MANIFEST
+__pycache__
+venv
+test-venv
