@@ -3,7 +3,6 @@ import shutil
 import os
 import logging
 from requests.exceptions import ReadTimeout
-from pathlib import Path
 
 def compile(src, dst, mp, timeout=config.TIMEOUT):
     shutil.copytree(src, dst + "/compile")
