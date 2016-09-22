@@ -41,3 +41,16 @@ class TestRunTests(unittest.TestCase):
 
         # Make sure all containers are clenaed up
         assert containers_before == containers_after
+
+    def test_logs(self):
+        run_test = dockergrader.run_tests.RunTest("logs_testcase")
+
+        run_test.add_command(image="ubuntu", command='bash -c "echo foo"', name="foo")
+        run_test.add_command(image="ubuntu", command='bash -c "echo bar"', name="bar")
+
+        run_test.run_commands()
+
+        assert run_test.logs("foo").startswith(b"foo")
+        assert run_test.logs("bar").startswith(b"bar")
+
+        run_test.cleanup()

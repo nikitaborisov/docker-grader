@@ -54,6 +54,9 @@ class RunTest:
             container["StatusCode"] = config.docker.wait(container["Id"], timeout)
         logging.debug("Containers are done")
 
+    def logs(self, name):
+        return config.docker.logs(self.containers[name]["Id"])
+
     def cleanup(self):
         for container in self.containers.values():
             config.docker.remove_container(container["Id"])
