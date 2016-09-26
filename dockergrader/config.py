@@ -7,4 +7,4 @@ def container_name(mp,task,term=TERM):
 	return "csece438/{}-{}:{}".format(mp,task,term)
 
 from docker import Client
-docker = Client()
+docker = Client(version='auto')
