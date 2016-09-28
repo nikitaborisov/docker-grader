@@ -2,7 +2,7 @@ import pathlib
 from collections import namedtuple, defaultdict
 from datetime import datetime
 from heapq import heappush, heappop
-from subprocess import Popen, PIPE, call
+from subprocess import Popen, PIPE, check_call, check_output, CalledProcessError
 import sys
 import time
 import logging
@@ -10,6 +10,7 @@ import logging
 QueueEntry = namedtuple(
     'QueueEntry', ['attempts', 'time', 'version', 'name', 'parent'])
 
+log = logging.getLogger(__name__)
 
 class GradingQueue():
     """ Grading queue is sorted by:
@@ -44,7 +45,7 @@ class GradingQueue():
         return bool(self.names)
 
 QUEUE = GradingQueue()
-GRADED = defaultdict(list)
+GRADED = defaultdict(set)
 
 
 def scan_dir(svn_dir, version_pat):
@@ -52,7 +53,10 @@ def scan_dir(svn_dir, version_pat):
         with version_filename.open() as version_file:
             version = int(version_file.readline().strip())
         name = version_filename.parts[-3]
-        attempts = 0
+        for output_path in (version_filename.parent.glob("GRADING_OUTPUT.*")):
+            output_name = str(output_path)
+            dot = output_name.rfind('.')
+            GRADED[name].add(int(output_name[dot+1:]))
         if version in GRADED[name]:
             continue
         attempts = len(GRADED[name])
@@ -60,11 +64,15 @@ def scan_dir(svn_dir, version_pat):
                               version_filename.parent))
 
 if __name__ == "__main__":
+    logging.basicConfig(format="%(asctime)-15s %(message)s",
+                        filename="watch.log", level=logging.INFO)
     SVN_DIR = pathlib.Path(sys.argv[1])
     VERSION_PAT = "*/{}/VERSION".format(sys.argv[2])
     while True:
-        ret = call(["svn", "update", str(SVN_DIR)])
-        if ret != 0:
+        try:
+            out = check_output(["svn", "update", str(SVN_DIR)])
+            logging.error("Svn update: %s", out)
+        except CalledProcessError:
             logging.error("Error during svn update")
         scan_dir(SVN_DIR, VERSION_PAT)
         if QUEUE:
@@ -73,19 +81,17 @@ if __name__ == "__main__":
             p = Popen(["python3", "run_tests.py", str(qe.parent)],
                       stdout=PIPE)
             out, _ = p.communicate()
-            GRADED[qe.name].append(qe.version)
+            GRADED[qe.name].add(qe.version)
             out_fn = qe.parent / "GRADING_OUTPUT.{}".format(qe.version)
             with out_fn.open("wb") as outf:
                 outf.write(out)
-            ret = call(["svn", "add", str(out_fn)])
-            if ret != 0:
-                logging.error("Error during svn add of %s", str(out_fn))
-            else:
-                ret = call(["svn", "commit", "-m",
+            try:
+                check_call(["svn", "add", str(out_fn)])
+                check_call(["svn", "commit", "-m",
                             "Autograder output for {} version {}".format(qe.name,
                                                                          qe.version), str(out_fn)])
-                if ret != 0:
+            except CalledProcessError:
                     logging.error("Error during svm commit of %s", str(out_fn))
         else:
-            print("Queue Empty, sleeping")
+            logging.info("Queue Empty, sleeping")
             time.sleep(30)
