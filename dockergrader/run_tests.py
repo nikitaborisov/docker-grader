@@ -2,6 +2,7 @@ from . import config
 import logging
 import time
 from collections import OrderedDict
+import random
 
 
 class RunTest:
@@ -10,10 +11,8 @@ class RunTest:
         self.testcase_name = testcase_name
         self.containers = OrderedDict()
         self.network = None
-
-    @property
-    def network_name(self):
-        return "dockergrader-testnet-{}".format(self.testcase_name)
+        self.network_name = "dockergrader-testnet-{}-{:05x}".format(
+            self.testcase_name, random.randrange(2**20))
 
     def create_network(self, internal=False):
         self.network = config.docker.create_network(
@@ -43,24 +42,29 @@ class RunTest:
             name=name,
             ports=ports,
             host_config=host_config,
-            networking_config = network_config)
+            networking_config=network_config)
         logging.debug("Created container: %s", container)
         self.containers[name] = container
 
-    def run_commands(self, timeout=None, nowait=[]):
-        for container in self.containers.values():
+    def run_commands(self, timeout=None, nowait=[], delay=10):
+        for i, container in enumerate(self.containers.values()):
+            if i > 0:
+                # sleep between starting containers to ensure
+                # they have time to start up
+                time.sleep(delay)
             config.docker.start(container["Id"])
             logging.debug("Started container: %s", container["Id"])
-            time.sleep(30)
 
         logging.debug("Waiting for containers to finish")
         for name, container in self.containers.items():
             if name in nowait:
                 continue
             try:
-                container["StatusCode"] = config.docker.wait(container["Id"], timeout)
+                container["StatusCode"] = config.docker.wait(
+                    container["Id"], timeout)
             except:
-                logging.info("Exception waiting for container %s", container["Id"])
+                logging.info("Exception waiting for container %s",
+                             container["Id"])
                 container["StatusCode"] = -1
         for name in nowait:
             logging.debug("Stopping container %s", self.containers[name]["Id"])
@@ -72,6 +76,6 @@ class RunTest:
 
     def cleanup(self):
         for container in self.containers.values():
-            config.docker.remove_container(container["Id"],force=True)
+            config.docker.remove_container(container["Id"], force=True)
         if self.network:
             self.remove_network()
