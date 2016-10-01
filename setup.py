@@ -1,4 +1,5 @@
-from distutils.core import setup
+from setuptools import setup
 setup(name='dockergrader',
-	version='0.1',
-	packages=['dockergrader'])
+	setup_requires=['pbr>=1.9', 'setuptools>=17.1'],
+	packages=['dockergrader'],
+	pbr=True)
