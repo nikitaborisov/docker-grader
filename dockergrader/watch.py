@@ -51,7 +51,12 @@ GRADED = defaultdict(set)
 def scan_dir(svn_dir, version_pat):
     for version_filename in svn_dir.glob(version_pat):
         with version_filename.open() as version_file:
-            version = int(version_file.readline().strip())
+            try:
+                version_line = version_file.readline().strip()
+                version = int(version_line)
+            except ValueError:
+                log.error("Incorrect version format: %s", version_line)
+                continue
         name = version_filename.parts[-3]
         for output_path in (version_filename.parent.glob("GRADING_OUTPUT.*")):
             output_name = str(output_path)
