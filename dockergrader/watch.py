@@ -71,6 +71,7 @@ def scan_dir(svn_dir, version_pat):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)-15s %(message)s",
                         filename="watch.log", level=logging.INFO)
+    sys.stdin.close()
     SVN_DIR = pathlib.Path(sys.argv[1])
     VERSION_PAT = "*/{}/VERSION".format(sys.argv[2])
     while True:
