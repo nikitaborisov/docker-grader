@@ -161,6 +161,7 @@ def grade_one():
 
 
 if __name__ == "__main__":
+    sys.stdin.close()
     logging.basicConfig(format="%(asctime)-15s %(message)s",
                         filename="watch.log", level=logging.INFO)
     SVN_DIR = pathlib.Path(sys.argv[1])
