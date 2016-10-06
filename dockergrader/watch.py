@@ -41,6 +41,12 @@ class GradingQueue():
         del self.names[qe.name]
         return qe
 
+    def sorted(self):
+        for qe in sorted(self.queue):
+            if qe != self.names[qe.name]:
+                continue
+            yield qe
+
     def __str__(self):
         return '[{}]'.format(', '.join("{}v{} ({})".format(qe.name, qe.version,
             qe.attempts) for qe in self.queue))
@@ -83,7 +89,7 @@ def dump_queue(queue=QUEUE, output="queue.html"):
    </thead>
    <tbody>
 '''.format(datetime.now().ctime()))
-        for qe in queue.queue:
+        for qe in queue.sorted():
             outfile.write('''
         <tr>
             <td>{}</td>
