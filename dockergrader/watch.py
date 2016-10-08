@@ -2,7 +2,7 @@ from pathlib import Path
 from collections import namedtuple, defaultdict
 from datetime import datetime
 from heapq import heappush, heappop
-from subprocess import Popen, PIPE, check_call, check_output, CalledProcessError
+from subprocess import *
 import sys
 import time
 import logging
@@ -97,7 +97,7 @@ class GradingQueue():
 QUEUE = GradingQueue()
 
 
-def dump_queue(queue=QUEUE, output="queue.html"):
+def dump_queue(current=None, queue=QUEUE, output="queue.html"):
     with open(output, 'w') as outfile:
         outfile.write('''
 <!DOCTYPE html>
@@ -154,7 +154,10 @@ def dump_queue(queue=QUEUE, output="queue.html"):
    <tbody>
 '''.format(datetime.now().ctime()))
         first_class = ' class="active"'
-        for qe in queue.sorted():
+        entries = list(queue.sorted())
+        if current:
+            entries.insert(0, current)
+        for qe in entries:
             outfile.write('''
         <tr{}>
             <td>{}</td>
@@ -180,7 +183,7 @@ OUTFILE = "GRADING_OUTPUTv1"
 STOPFILE = Path("STOP_AUTOGRADER")
 
 
-def scan_dir(svn_dir, version_pat):
+def scan_dir(svn_dir, version_pat, current=None):
     for version_filename in svn_dir.glob(version_pat):
         tests = []
         with version_filename.open() as version_file:
@@ -197,6 +200,9 @@ def scan_dir(svn_dir, version_pat):
         #     output_name = str(output_path)
         #     dot = output_name.rfind('.')
         #     GRADED[name].add(int(output_name[dot+1:]))
+        if current and name == current.name:
+            # skip currently graded user
+            continue
         if version in GRADED[name]:
             continue
         prev_output = version_filename.parent / "{}.{}".format(OUTFILE, version-1)
@@ -232,7 +238,14 @@ def grade_one():
         if "-n" not in sys.argv[1:]:
             p = Popen(["python3", "run_tests.py", str(qe.parent)] + qe.tests,
                       stdout=PIPE)
-            out, _ = p.communicate()
+            while True:
+                try:
+                    out, _ = p.communicate(timeout=30)
+                    break
+                except TimeoutExpired:
+                    scan_dir(SVN_DIR, VERSION_PAT, qe)
+                    dump_queue(current=qe)
+
             GRADED[qe.name].add(qe.version)
             out_fn = qe.parent / "{}.{}".format(OUTFILE, qe.version)
             if out_fn.exists():
