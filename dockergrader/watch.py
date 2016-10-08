@@ -2,7 +2,7 @@ import pathlib
 from collections import namedtuple, defaultdict
 from datetime import datetime
 from heapq import heappush, heappop
-from subprocess import Popen, PIPE, check_call, check_output, CalledProcessError
+from subprocess import Popen, PIPE, check_call, check_output, CalledProcessError, DEVNULL
 import sys
 import time
 import logging
@@ -187,10 +187,10 @@ def grade_one():
             if "-q" not in sys.argv[1:]:    # -q: don't commit
                 try:
                     check_call(["svn", "add", str(out_fn)])
-                    comment = "Autograder output for {} version {}".format(qe.name,
-                                                                           qe.version),
+                    comment = "Autograder output for {} version {}".format(
+                        qe.name, qe.version)
                     check_call(["svn", "commit", "-m", comment,
-                                str(out_fn)], input=b'')
+                                str(out_fn)], stdin=DEVNULL)
                 except CalledProcessError:
                     logging.error("Error during svn commit of %s", str(out_fn))
     else:
