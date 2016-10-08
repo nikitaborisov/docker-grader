@@ -8,12 +8,12 @@ import time
 import logging
 import shelve
 from fcntl import flock, LOCK_EX
-import ago
 
 QueueEntry = namedtuple(
     'QueueEntry', ['attempts', 'time', 'version', 'name', 'parent'])
 
 log = logging.getLogger(__name__)
+
 
 class GradingQueue():
     """ Grading queue is sorted by:
@@ -49,7 +49,7 @@ class GradingQueue():
 
     def __str__(self):
         return '[{}]'.format(', '.join("{}v{} ({})".format(qe.name, qe.version,
-            qe.attempts) for qe in self.queue))
+                                                           qe.attempts) for qe in self.queue))
 
     def __len__(self):
         return len(self.names)
@@ -60,6 +60,7 @@ class GradingQueue():
 
 QUEUE = GradingQueue()
 
+
 def dump_queue(queue=QUEUE, output="queue.html"):
     with open(output, 'w') as outfile:
         outfile.write('''
@@ -69,14 +70,40 @@ def dump_queue(queue=QUEUE, output="queue.html"):
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="60">
     <title>Autograder Queue</title>
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <script>
+''')
+        outfile.write('''
+      const update_time = new Date({0}, {1}-1, {2}, {3}, {4}, {5});
+'''.format(*datetime.now().timetuple()))
+        outfile.write('''
+      function update() {
+        var now = new Date();
+        var delta = Math.floor((now - update_time)/1000);
+        var html = '';
+        if (delta > 60) {
+          if (delta > 3600) {
+            html = Math.floor(delta/3600) + " hours, ";
+          }
+          html += Math.floor(delta/60) % 60 + " minutes, ";
+        }
+        html += delta % 60 + " seconds ago";
+        document.getElementById('ago').innerHTML = html;
+      }
+      setInterval(update, 1000);
+      update();
+
+      </script>
+''')
+        outfile.write('''
 </head>
 <body>
   <div class="container">
   <h1>Autograder Queue</h1>
 
-  <p>Last updated: {}</p>
+  <p>Last updated: {}, <span id="ago"></p>
 
   <table class="table">
   <thead>
@@ -89,15 +116,17 @@ def dump_queue(queue=QUEUE, output="queue.html"):
    </thead>
    <tbody>
 '''.format(datetime.now().ctime()))
+        first_class = ' class="active"'
         for qe in queue.sorted():
             outfile.write('''
-        <tr>
+        <tr{}>
             <td>{}</td>
             <td>{}</td>
             <td>{}</td>
             <td>{}</td>
         </tr>
-'''.format(qe.name, qe.version, ago.human(qe.time, precision=1), qe.attempts))
+'''.format(first_class, qe.name, qe.version, qe.time.strftime("%H:%M"), qe.attempts))
+            first_class = ''
         outfile.write('''
     </tbody>
 </table>
@@ -110,6 +139,7 @@ def dump_queue(queue=QUEUE, output="queue.html"):
 GRADED = None   # make sure it's a global variable
 
 OUTFILE = "GRADING_OUTPUTv1"
+
 
 def scan_dir(svn_dir, version_pat):
     for version_filename in svn_dir.glob(version_pat):
@@ -131,9 +161,10 @@ def scan_dir(svn_dir, version_pat):
         QUEUE.push(QueueEntry(attempts, datetime.now(), version, name,
                               version_filename.parent))
 
+
 def grade_one():
     try:
-        out = check_output(["svn", "update", str(SVN_DIR)])
+        out = check_output(["svn", "update", str(SVN_DIR)], input=b'')
         logging.error("Svn update: %s", out)
     except CalledProcessError:
         logging.error("Error during svn update")
@@ -156,11 +187,12 @@ def grade_one():
             if "-q" not in sys.argv[1:]:    # -q: don't commit
                 try:
                     check_call(["svn", "add", str(out_fn)])
-                    check_call(["svn", "commit", "-m",
-                                "Autograder output for {} version {}".format(qe.name,
-                                                                             qe.version), str(out_fn)])
+                    comment = "Autograder output for {} version {}".format(qe.name,
+                                                                           qe.version),
+                    check_call(["svn", "commit", "-m", comment,
+                                str(out_fn)], input=b'')
                 except CalledProcessError:
-                    logging.error("Error during svm commit of %s", str(out_fn))
+                    logging.error("Error during svn commit of %s", str(out_fn))
     else:
         logging.info("Queue Empty, sleeping")
         time.sleep(30)
