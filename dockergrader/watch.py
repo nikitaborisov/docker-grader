@@ -1,4 +1,4 @@
-import pathlib
+from pathlib import Path
 from collections import namedtuple, defaultdict
 from datetime import datetime
 from heapq import heappush, heappop
@@ -7,10 +7,46 @@ import sys
 import time
 import logging
 import shelve
+import re
 from fcntl import flock, LOCK_EX
+from functools import total_ordering
 
-QueueEntry = namedtuple(
-    'QueueEntry', ['attempts', 'time', 'version', 'name', 'parent'])
+QueueEntryBase = namedtuple(
+    'QueueEntryBase', ['attempts', 'time', 'version', 'name', 'tests', 'parent'])
+
+TESTS_UPPER_BOUND = 5
+
+@total_ordering
+class QueueEntry:
+    def __init__(self, attempts, time, version, name, tests, parent):
+        self.attempts = attempts
+        self.time = time
+        self.version = version
+        self.name = name
+        self.tests = tests
+        self.parent = parent
+
+    @property
+    def _adj_attempts(self):
+        if self.tests:
+            return self.attempts + min(len(self.tests), TESTS_UPPER_BOUND)
+        else:
+            return self.attempts + TESTS_UPPER_BOUND
+
+    @property
+    def _sortkey(self):
+        # last three are completely arbitrary for sorting
+        return (self._adj_attempts, self.time, self.version, self.name, self.tests)
+
+    def __hash__(self):
+        return hash(self._sortkey)
+
+    def __eq__(self, other):
+        return self._sortkey == other._sortkey
+
+    def __le__(self, other):
+        return self._sortkey <= other._sortkey
+
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +146,7 @@ def dump_queue(queue=QUEUE, output="queue.html"):
       <tr>
           <th>Team</th>
           <th>Version</th>
+          <th>Test to run</th>
           <th>Waiting since</th>
           <th>Total attempts</th>
      </tr>
@@ -124,8 +161,9 @@ def dump_queue(queue=QUEUE, output="queue.html"):
             <td>{}</td>
             <td>{}</td>
             <td>{}</td>
+            <td>{}</td>
         </tr>
-'''.format(first_class, qe.name, qe.version, qe.time.strftime("%H:%M"), qe.attempts))
+'''.format(first_class, qe.name, qe.version, qe.tests and ', '.join(qe.tests) or "all", qe.time.strftime("%H:%M"), qe.attempts))
             first_class = ''
         outfile.write('''
     </tbody>
@@ -139,14 +177,18 @@ def dump_queue(queue=QUEUE, output="queue.html"):
 GRADED = None   # make sure it's a global variable
 
 OUTFILE = "GRADING_OUTPUTv1"
+STOPFILE = Path("STOP_AUTOGRADER")
 
 
 def scan_dir(svn_dir, version_pat):
     for version_filename in svn_dir.glob(version_pat):
+        tests = []
         with version_filename.open() as version_file:
             try:
-                version_line = version_file.readline().strip()
-                version = int(version_line)
+                version_line = version_file.readline().strip().split()
+                version = int(version_line[0])
+                if len(version_line) > 1:
+                    tests = version_line[1:]
             except ValueError:
                 log.error("Incorrect version format: %s", version_line)
                 continue
@@ -157,15 +199,28 @@ def scan_dir(svn_dir, version_pat):
         #     GRADED[name].add(int(output_name[dot+1:]))
         if version in GRADED[name]:
             continue
+        prev_output = version_filename.parent / "{}.{}".format(OUTFILE, version-1)
+        if not tests and prev_output.exists():
+            with prev_output.open() as prev_output_file:
+                for l in prev_output_file:
+                    m = re.search(r"Test ([\w_.]+) Failed", l)
+                    if m:
+                        tests.append(m.group(1))
+        if tests == ["all"]:
+            tests = []
         attempts = len(GRADED[name])
         QUEUE.push(QueueEntry(attempts, datetime.now(), version, name,
-                              version_filename.parent))
-
+                              tests, version_filename.parent))
 
 def grade_one():
     try:
         out = check_output(["svn", "update", str(SVN_DIR)], input=b'')
         logging.error("Svn update: %s", out)
+    except KeyboardInterrupt:
+        logging.info("Terminating, cleaning up svn")
+        out = check_call(["svn", "cleanup", str(SVN_DIR)])
+        logging.info("Goodbye")
+        sys.exit(0)
     except CalledProcessError:
         logging.error("Error during svn update")
     scan_dir(SVN_DIR, VERSION_PAT)
@@ -173,9 +228,9 @@ def grade_one():
     dump_queue()
     if QUEUE:
         qe = QUEUE.pop()
-        logging.info("Grading %s version %s", qe.name, qe.version)
+        logging.info("Grading %s version %s tests %s", qe.name, qe.version, ' '.join(qe.tests))
         if "-n" not in sys.argv[1:]:
-            p = Popen(["python3", "run_tests.py", str(qe.parent)],
+            p = Popen(["python3", "run_tests.py", str(qe.parent)] + qe.tests,
                       stdout=PIPE)
             out, _ = p.communicate()
             GRADED[qe.name].add(qe.version)
@@ -202,19 +257,28 @@ if __name__ == "__main__":
     sys.stdin.close()
     logging.basicConfig(format="%(asctime)-15s %(message)s",
                         filename="watch.log", level=logging.INFO)
-    SVN_DIR = pathlib.Path(sys.argv[1])
+    if STOPFILE.exists():
+        log.info("Deleting old stop file")
+        STOPFILE.unlink()
+    SVN_DIR = Path(sys.argv[1])
     VERSION_PAT = "*/{}/VERSION".format(sys.argv[2])
     ATTEMPTS_FILE = "attempts.db"
-    LOCK_FILE = ATTEMPTS_FILE + ".lock"
-    with open(LOCK_FILE, 'w') as lock_file:
-        log.info("Acquiring shelf lock")
-        flock(lock_file.fileno(), LOCK_EX)
-        log.info("Shelf lock acquired")
-        with shelve.open(ATTEMPTS_FILE, writeback=True) as db:
-            if "attempts" not in db:
-                db["attempts"] = defaultdict(set)
-            GRADED = db["attempts"]
-            while True:
-                grade_one()
-                db['attempts'] = GRADED
-                db.sync()
+    LOCK_FILE = Path(ATTEMPTS_FILE + ".lock")
+    try:
+        with LOCK_FILE.open('w') as lock_file:
+            log.info("Acquiring shelf lock")
+            flock(lock_file.fileno(), LOCK_EX)
+            log.info("Shelf lock acquired")
+            with shelve.open(ATTEMPTS_FILE, writeback=True) as db:
+                if "attempts" not in db:
+                    db["attempts"] = defaultdict(set)
+                GRADED = db["attempts"]
+                while True:
+                    grade_one()
+                    db['attempts'] = GRADED
+                    db.sync()
+                    if STOPFILE.exists():
+                        break
+    finally:
+        log.info("Releasing lock")
+        LOCK_FILE.unlink()
