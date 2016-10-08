@@ -184,4 +184,5 @@ if __name__ == "__main__":
             GRADED = db["attempts"]
             while True:
                 grade_one()
+                db['attempts'] = GRADED
                 db.sync()
