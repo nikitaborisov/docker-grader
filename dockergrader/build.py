@@ -43,6 +43,9 @@ def build_custom_image(dockerfile_str, path, tag=None):
             dockerfile.flush()
             tar.add(dockerfile.name, arcname="Dockerfile")
         for name in path.glob("*"):
+            if str(name.relative_to(path)) == "Dockerfile":
+                # skip dockerfile
+                continue
             tar.add(str(name), arcname=str(name.relative_to(path)))
         tar.close()
         context_file.seek(0)
