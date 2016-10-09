@@ -48,6 +48,8 @@ class QueueEntry:
         return hash(self._sortkey)
 
     def __eq__(self, other):
+        if type(other) != QueueEntry:
+            return False
         return self._sortkey == other._sortkey
 
     def __le__(self, other):
@@ -212,8 +214,8 @@ def scan_dir(svn_dir, version_pat):
                 version = int(version_line[0])
                 if len(version_line) > 1:
                     tests = version_line[1:]
-            except ValueError:
-                log.error("Incorrect version format: %s", version_line)
+            except ValueError as ve:
+                log.error("Incorrect version format: %s (%s)", version_line, ve.args)
                 continue
         name = version_filename.parts[-3]
         # for output_path in (version_filename.parent.glob("{}.*".format(OUTFILE))):
@@ -241,7 +243,7 @@ def scan_dir(svn_dir, version_pat):
 
     dump_queue()
 
-MAX_THREADS = 3
+MAX_THREADS = 1
 
 
 class Grader(Thread):
@@ -273,7 +275,7 @@ class Grader(Thread):
                         comment = "Autograder output for {} version {}".format(
                             self.qe.name, self.qe.version)
                         check_call(["svn", "commit", "-m", comment,
-                                    str(out_fn)], input=b'')
+                                    str(out_fn)], stdin=DEVNULL)
                     except CalledProcessError:
                         logging.error(
                             "Error during svn commit of %s", str(out_fn))
