@@ -14,7 +14,7 @@ from functools import total_ordering
 QueueEntryBase = namedtuple(
     'QueueEntryBase', ['attempts', 'time', 'version', 'name', 'tests', 'parent'])
 
-TESTS_UPPER_BOUND = 5
+TESTS_UPPER_BOUND = 10
 
 @total_ordering
 class QueueEntry:
@@ -71,7 +71,7 @@ class GradingQueue():
     def pop(self):
         while True:
             qe = heappop(self.queue)
-            if qe == self.names[qe.name]:
+            if qe == self.names.get(qe.name,None):
                 # this one actually needs to be processed
                 break
         del self.names[qe.name]
@@ -79,7 +79,7 @@ class GradingQueue():
 
     def sorted(self):
         for qe in sorted(self.queue):
-            if qe != self.names[qe.name]:
+            if self.names.get(qe.name,None) != qe:
                 continue
             yield qe
 
@@ -153,7 +153,7 @@ def dump_queue(current=None, queue=QUEUE, output="queue.html"):
    </thead>
    <tbody>
 '''.format(datetime.now().ctime()))
-        first_class = ' class="active"'
+        first_class = ' class="info"'
         entries = list(queue.sorted())
         if current:
             entries.insert(0, current)
