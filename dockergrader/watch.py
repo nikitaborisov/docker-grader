@@ -349,6 +349,11 @@ if __name__ == "__main__":
                     db['attempts'] = GRADED
                     db.sync()
                     if STOPFILE.exists():
+                        log.info("Waiting for graders to finish")
+                        for g in GRADERS:
+                            g.join()
+                        db['attempts'] = GRADED
+                        db.sync()
                         break
     finally:
         log.info("Releasing lock")
