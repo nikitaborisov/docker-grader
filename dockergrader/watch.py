@@ -218,10 +218,10 @@ def scan_dir(svn_dir, version_pat, current=None):
         QUEUE.push(QueueEntry(attempts, datetime.now(), version, name,
                               tests, version_filename.parent))
 
-def grade_one():
+def svn_update():
     try:
         out = check_output(["svn", "update", str(SVN_DIR)], input=b'')
-        logging.error("Svn update: %s", out)
+        logging.info("Svn update: %s", out)
     except KeyboardInterrupt:
         logging.info("Terminating, cleaning up svn")
         out = check_call(["svn", "cleanup", str(SVN_DIR)])
@@ -229,6 +229,9 @@ def grade_one():
         sys.exit(0)
     except CalledProcessError:
         logging.error("Error during svn update")
+
+def grade_one():
+    svn_update()
     scan_dir(SVN_DIR, VERSION_PAT)
     logging.info("Queue is %s", QUEUE)
     dump_queue()
@@ -243,6 +246,7 @@ def grade_one():
                     out, _ = p.communicate(timeout=30)
                     break
                 except TimeoutExpired:
+                    svn_update()
                     scan_dir(SVN_DIR, VERSION_PAT, qe)
                     dump_queue(current=qe)
 
