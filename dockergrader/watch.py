@@ -11,13 +11,19 @@ import re
 from fcntl import flock, LOCK_EX
 from functools import total_ordering
 
+from threading import Thread, Lock
+
 QueueEntryBase = namedtuple(
     'QueueEntryBase', ['attempts', 'time', 'version', 'name', 'tests', 'parent'])
 
 TESTS_UPPER_BOUND = 10
 
+svn_lock = Lock()
+
+
 @total_ordering
 class QueueEntry:
+
     def __init__(self, attempts, time, version, name, tests, parent):
         self.attempts = attempts
         self.time = time
@@ -71,7 +77,7 @@ class GradingQueue():
     def pop(self):
         while True:
             qe = heappop(self.queue)
-            if qe == self.names.get(qe.name,None):
+            if qe == self.names.get(qe.name, None):
                 # this one actually needs to be processed
                 break
         del self.names[qe.name]
@@ -79,7 +85,7 @@ class GradingQueue():
 
     def sorted(self):
         for qe in sorted(self.queue):
-            if self.names.get(qe.name,None) != qe:
+            if self.names.get(qe.name, None) != qe:
                 continue
             yield qe
 
@@ -96,8 +102,11 @@ class GradingQueue():
 
 QUEUE = GradingQueue()
 
+GRADERS = []
 
-def dump_queue(current=None, queue=QUEUE, output="queue.html"):
+
+def dump_queue(queue=QUEUE, output="queue.html"):
+    logging.info("Queue is %s", queue)
     with open(output, 'w') as outfile:
         outfile.write('''
 <!DOCTYPE html>
@@ -133,6 +142,7 @@ def dump_queue(current=None, queue=QUEUE, output="queue.html"):
 
       </script>
 ''')
+
         outfile.write('''
 </head>
 <body>
@@ -153,21 +163,31 @@ def dump_queue(current=None, queue=QUEUE, output="queue.html"):
    </thead>
    <tbody>
 '''.format(datetime.now().ctime()))
-        first_class = ' class="info"'
+
+        for g in GRADERS:
+            outfile.write('''
+        <tr class="info">
+            <td>{}<br><small>Started @ {}</small></td>
+            <td>{}</td>
+            <td>{}</td>
+            <td>{}</td>
+            <td>{}</td>
+        </tr>
+'''.format(g.qe.name, g.start_time.strftime("%H:%M"), g.qe.version, g.qe.tests and
+                ', '.join(g.qe.tests) or "all", g.qe.time.strftime("%H:%M"), g.qe.attempts))
+
         entries = list(queue.sorted())
-        if current:
-            entries.insert(0, current)
         for qe in entries:
             outfile.write('''
-        <tr{}>
+        <tr>
             <td>{}</td>
             <td>{}</td>
             <td>{}</td>
             <td>{}</td>
             <td>{}</td>
         </tr>
-'''.format(first_class, qe.name, qe.version, qe.tests and ', '.join(qe.tests) or "all", qe.time.strftime("%H:%M"), qe.attempts))
-            first_class = ''
+'''.format(qe.name, qe.version, qe.tests and ', '.join(qe.tests) or "all", qe.time.strftime("%H:%M"), qe.attempts))
+
         outfile.write('''
     </tbody>
 </table>
@@ -183,7 +203,7 @@ OUTFILE = "GRADING_OUTPUTv1"
 STOPFILE = Path("STOP_AUTOGRADER")
 
 
-def scan_dir(svn_dir, version_pat, current=None):
+def scan_dir(svn_dir, version_pat):
     for version_filename in svn_dir.glob(version_pat):
         tests = []
         with version_filename.open() as version_file:
@@ -200,12 +220,13 @@ def scan_dir(svn_dir, version_pat, current=None):
         #     output_name = str(output_path)
         #     dot = output_name.rfind('.')
         #     GRADED[name].add(int(output_name[dot+1:]))
-        if current and name == current.name:
-            # skip currently graded user
+        if name in {g.qe.name for g in GRADERS}:
+        # skip currently graded user
             continue
         if version in GRADED[name]:
             continue
-        prev_output = version_filename.parent / "{}.{}".format(OUTFILE, version-1)
+        prev_output = version_filename.parent / \
+            "{}.{}".format(OUTFILE, version - 1)
         if not tests and prev_output.exists():
             with prev_output.open() as prev_output_file:
                 for l in prev_output_file:
@@ -218,56 +239,89 @@ def scan_dir(svn_dir, version_pat, current=None):
         QUEUE.push(QueueEntry(attempts, datetime.now(), version, name,
                               tests, version_filename.parent))
 
-def svn_update():
-    try:
-        out = check_output(["svn", "update", str(SVN_DIR)], input=b'')
-        logging.info("Svn update: %s", out)
-    except KeyboardInterrupt:
-        logging.info("Terminating, cleaning up svn")
-        out = check_call(["svn", "cleanup", str(SVN_DIR)])
-        logging.info("Goodbye")
-        sys.exit(0)
-    except CalledProcessError:
-        logging.error("Error during svn update")
-
-def grade_one():
-    svn_update()
-    scan_dir(SVN_DIR, VERSION_PAT)
-    logging.info("Queue is %s", QUEUE)
     dump_queue()
-    if QUEUE:
-        qe = QUEUE.pop()
-        logging.info("Grading %s version %s tests %s", qe.name, qe.version, ' '.join(qe.tests))
-        if "-n" not in sys.argv[1:]:
-            p = Popen(["python3", "run_tests.py", str(qe.parent)] + qe.tests,
-                      stdout=PIPE)
-            while True:
-                try:
-                    out, _ = p.communicate(timeout=30)
-                    break
-                except TimeoutExpired:
-                    svn_update()
-                    scan_dir(SVN_DIR, VERSION_PAT, qe)
-                    dump_queue(current=qe)
 
-            GRADED[qe.name].add(qe.version)
-            out_fn = qe.parent / "{}.{}".format(OUTFILE, qe.version)
+MAX_THREADS = 3
+
+
+class Grader(Thread):
+
+    def __init__(self, qe):
+        super().__init__()
+        self.qe = qe
+
+    def run(self):
+        self.start_time = datetime.now()
+        logging.info("Grading %s version %s tests %s",
+                     self.qe.name, self.qe.version, ' '.join(self.qe.tests))
+        if "-n" not in sys.argv[1:]:
+            p = Popen(["python3", "run_tests.py", str(self.qe.parent)] +
+                      self.qe.tests, stdout=PIPE)
+            out, _ = p.communicate()
+
+            GRADED[self.qe.name].add(self.qe.version)
+
+            out_fn = self.qe.parent / "{}.{}".format(OUTFILE, self.qe.version)
             if out_fn.exists():
                 logging.warning("Warning, overwriting output file %s", out_fn)
             with out_fn.open("wb") as outf:
                 outf.write(out)
             if "-q" not in sys.argv[1:]:    # -q: don't commit
-                try:
-                    check_call(["svn", "add", str(out_fn)])
-                    comment = "Autograder output for {} version {}".format(
-                        qe.name, qe.version)
-                    check_call(["svn", "commit", "-m", comment,
-                                str(out_fn)], stdin=DEVNULL)
-                except CalledProcessError:
-                    logging.error("Error during svn commit of %s", str(out_fn))
+                with svn_lock:
+                    try:
+                        check_call(["svn", "add", str(out_fn)])
+                        comment = "Autograder output for {} version {}".format(
+                            self.qe.name, self.qe.version)
+                        check_call(["svn", "commit", "-m", comment,
+                                    str(out_fn)], input=b'')
+                    except CalledProcessError:
+                        logging.error(
+                            "Error during svn commit of %s", str(out_fn))
+
+
+SVN_UPDATE_INTERVAL = 15
+last_svn_update = None
+def svn_update():
+    global last_svn_update
+    if last_svn_update:
+        if (datetime.now() - last_svn_update).seconds < SVN_UPDATE_INTERVAL:
+            return
+    last_svn_update = datetime.now()
+    with svn_lock:
+        try:
+            out = check_output(["svn", "update", str(SVN_DIR)], input=b'')
+            logging.info("Svn update: %s", out)
+        except KeyboardInterrupt:
+            logging.info("Terminating, cleaning up svn")
+            out = check_call(["svn", "cleanup", str(SVN_DIR)])
+            logging.info("Goodbye")
+            sys.exit(0)
+        except CalledProcessError:
+            logging.error("Error during svn update")
+
+    scan_dir(SVN_DIR, VERSION_PAT)
+
+
+def grade_one():
+    svn_update()
+    # clean up finished graders
+    global GRADERS
+    if not all(g.is_alive() for g in GRADERS):
+        GRADERS = [g for g in GRADERS if g.is_alive()]
+        dump_queue()
+    while QUEUE and len(GRADERS) < MAX_THREADS:
+        qe = QUEUE.pop()
+        g = Grader(qe)
+        g.start()
+        GRADERS.append(g)
+        dump_queue()
+
+    if not QUEUE and not GRADERS:
+        # nothing's up, sleep
+        time.sleep(15)
     else:
-        logging.info("Queue Empty, sleeping")
-        time.sleep(30)
+        # prevent spamming anyway
+        time.sleep(1)
 
 
 if __name__ == "__main__":
