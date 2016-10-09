@@ -25,3 +25,6 @@ def test_queue_entry_sort():
     assert QueueEntry(attempts=0, time=0, version=0, name='foo', tests=['one'],
         parent=None) < QueueEntry(attempts=0, time=0, version=0, name='bar',
         tests=['a','b','c','d'], parent=None)
+
+    assert qe1 != None
+    assert "asdf" != qe2
