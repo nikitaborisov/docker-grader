@@ -16,6 +16,7 @@ class BuildError(Exception):
         self.error = error
         self.output = output
 
+
 def _parse_build_output(stream):
     decstream = list(json.loads(l) for s in stream for l in
                      s.decode().split('\n') if l)   # capture output
@@ -33,20 +34,26 @@ def _parse_build_output(stream):
         raise BuildError(error, output)
 
 
-def build_custom_image(dockerfile_str, path, tag=None):
-    """ Specifies a dockerfile as a string, and a path to create a custom context """
+def build_custom_image(dockerfile_str, paths, tag=None):
+    """ Specifies a dockerfile as a string, and a path to create a custom
+    context """
     with TemporaryFile() as context_file:
         tar = tarfile.open(fileobj=context_file, mode='w')
-        path = Path(path)
         with NamedTemporaryFile('w') as dockerfile:
             dockerfile.write(dockerfile_str)
             dockerfile.flush()
             tar.add(dockerfile.name, arcname="Dockerfile")
-        for name in path.glob("*"):
-            if str(name.relative_to(path)) == "Dockerfile":
-                # skip dockerfile
-                continue
-            tar.add(str(name), arcname=str(name.relative_to(path)))
+        if not isinstance(paths, dict):
+            paths = {'': paths}
+        for n, d in paths.items():
+            arcname = Path(n)
+            path = Path(d)
+            for name in path.glob("*"):
+                if arcname / name.relative_to(path) == Path("Dockerfile"):
+                    # skip dockerfile
+                    continue
+                tar.add(str(name), arcname=str(arcname /
+                                               name.relative_to(path)))
         tar.close()
         context_file.seek(0)
         stream = config.docker.build(fileobj=context_file, custom_context=True,
