@@ -21,7 +21,7 @@ class RunTest:
     def remove_network(self):
         config.docker.remove_network(self.network["Id"])
 
-    def add_command(self, image, command, name=None, ports=None, binds=[]):
+    def add_command(self, image, command, name=None, ports=None, binds=[], caps=[]):
         """
         Arguments:
             `binds`  a list of docker-style "-v" parameters; e.g., /tmp/foo:/bar:rw
@@ -29,9 +29,9 @@ class RunTest:
         host_config = None
         if not name:
             name = "{}-{}".format(self.testcase_name, len(self.containers))
-        if binds:
+        if binds or caps:
             # FIXME: do copies
-            host_config = config.docker.create_host_config(binds=binds)
+            host_config = config.docker.create_host_config(binds=binds, cap_add=caps)
         network_config = None
         if self.network:
             network_config = config.docker.create_networking_config({
