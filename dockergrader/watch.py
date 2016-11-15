@@ -208,6 +208,7 @@ STOPFILE = Path("STOP_AUTOGRADER")
 def scan_dir(svn_dir, version_pat):
     for version_filename in svn_dir.glob(version_pat):
         if not version_filename.is_file():
+            log.error("{} not a file!".format(str(version_filename)))
             continue
         tests = []
         with version_filename.open() as version_file:
@@ -216,7 +217,7 @@ def scan_dir(svn_dir, version_pat):
                 version = int(version_line[0])
                 if len(version_line) > 1:
                     tests = version_line[1:]
-            except ValueError as ve:
+            except Exception as e:
                 log.error("Incorrect version format: %s (%s)", version_line, ve.args)
                 continue
         name = version_filename.parts[-3]
