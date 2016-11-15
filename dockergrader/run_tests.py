@@ -66,6 +66,7 @@ class RunTest:
                 logging.info("Exception waiting for container %s",
                              container["Id"])
                 container["StatusCode"] = -1
+                config.docker.stop(container["Id"])
         for name in nowait:
             logging.debug("Stopping container %s", self.containers[name]["Id"])
             config.docker.stop(self.containers[name]["Id"])

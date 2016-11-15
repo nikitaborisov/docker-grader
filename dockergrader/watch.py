@@ -207,6 +207,8 @@ STOPFILE = Path("STOP_AUTOGRADER")
 
 def scan_dir(svn_dir, version_pat):
     for version_filename in svn_dir.glob(version_pat):
+        if not version_filename.is_file():
+            continue
         tests = []
         with version_filename.open() as version_file:
             try:
@@ -243,7 +245,7 @@ def scan_dir(svn_dir, version_pat):
 
     dump_queue()
 
-MAX_THREADS = 1
+MAX_THREADS = 6
 
 
 class Grader(Thread):
